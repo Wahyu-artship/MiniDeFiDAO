@@ -1,57 +1,91 @@
-# Sample Hardhat 3 Project (`mocha` and `ethers`)
+# Mini DeFi + DAO
 
-This project showcases a Hardhat 3 project using `mocha` for tests and the `ethers` library for Ethereum interactions.
+The capstone project of a 90-day journey into smart contract development — a complete miniature DeFi protocol where every parameter is governed entirely by a DAO, not by any individual wallet.
 
-To learn more about Hardhat 3, please visit the [Getting Started guide](https://hardhat.org/docs/getting-started#getting-started-with-hardhat-3). To share your feedback, join our [Hardhat 3](https://hardhat.org/hardhat3-telegram-group) Telegram group or [open an issue](https://github.com/NomicFoundation/hardhat/issues/new) in our GitHub issue tracker.
+This combines everything built across the previous 11 projects (ERC20, staking, governance, timelock) into one integrated system.
 
-## Project Overview
+## Tech Stack
 
-This example project includes:
+- Solidity 0.8.28
+- Hardhat 3
+- OpenZeppelin Contracts 5.x (ERC20Votes, Governor, TimelockController, Ownable)
+- TypeScript + Ethers + Mocha
 
-- A simple Hardhat configuration file.
-- Foundry-compatible Solidity unit tests.
-- TypeScript integration tests using `mocha` and ethers.js
-- Examples demonstrating how to connect to different types of networks, including locally simulating OP mainnet.
+## Architecture
 
-## Usage
+- **ProtocolToken** — ERC20 with `Permit` and `ERC20Votes`. Used both as the staking asset in the vault and as the governance/voting token.
+- **SimpleVault** — A staking vault with one critical detail: `setRewardRate()` is `onlyOwner`, and **the owner is the Timelock contract, not a personal wallet**. No individual — not even the deployer — can unilaterally change protocol parameters.
+- **MyTimelock** — Wraps `TimelockController`. Enforces a delay between a proposal passing and its execution.
+- **MyGovernor** — Full Governor implementation (settings, simple counting, votes, quorum, timelock control) that creates and manages proposals.
 
-### Running Tests
+## The Core Idea: Protocol Owned by Governance
 
-To run all the tests in the project, execute the following command:
+```
+Deployer -> deploys SimpleVault with owner = Timelock address
+Deployer -> renounces admin role on Timelock
+                |
+From this point on, the ONLY way to change rewardRatePerSecond is:
+  1. A token holder creates a proposal (propose)
+  2. Token holders vote (castVote)
+  3. If quorum + majority passes, the proposal is queued (queue)
+  4. After the timelock delay, anyone can execute it (execute)
+```
 
-```shell
+This mirrors how real production DeFi protocols hand control to their community instead of keeping an admin key.
+
+## How to Run
+
+Install dependencies:
+```bash
+npm install
+```
+
+Compile contracts:
+```bash
+npx hardhat compile
+```
+
+Run tests:
+```bash
 npx hardhat test
 ```
 
-You can also selectively run the Solidity or `mocha` tests:
+## Testing
 
-```shell
-npx hardhat test solidity
-npx hardhat test mocha
-```
+| Test | What it proves |
+|---|---|
+| `vault owner is the Timelock, not a personal wallet` | Confirms ownership was correctly assigned at deployment |
+| `direct call to setRewardRate from a regular wallet reverts` | Confirms no individual — including the deployer — can bypass governance |
+| `DAO can change the reward rate through the full governance cycle` | End-to-end: propose -> vote -> queue -> execute, verifying the parameter actually changes only through this path |
 
-### Make a deployment to Sepolia
+## Technical Notes
 
-This project includes an example Ignition module to deploy the contract. You can deploy this module to a locally simulated chain or to Sepolia.
+### Renouncing Admin Control
 
-To run the deployment to a local chain:
+After deployment, the deployer calls `timelock.renounceRole(DEFAULT_ADMIN_ROLE, deployer)`. Without this step, the deployer would retain emergency control over the Timelock, undermining the entire premise of decentralized governance. This is a step that's easy to forget and a common audit finding in real DAOs.
 
-```shell
-npx hardhat ignition deploy ignition/modules/Counter.ts
-```
+### Block-Based vs Time-Based Delays
 
-To run the deployment to Sepolia, you need an account with funds to send the transaction. The provided Hardhat configuration includes a Configuration Variable called `SEPOLIA_PRIVATE_KEY`, which you can use to set the private key of the account you want to use.
+Two different units are used across the governance cycle, and mixing them up is a common source of bugs:
 
-You can set the `SEPOLIA_PRIVATE_KEY` variable using the `hardhat-keystore` plugin or by setting it as an environment variable.
+- `networkHelpers.mine(n)` — advances the chain by `n` **blocks**. Used for `votingDelay` and `votingPeriod`, which are measured in blocks.
+- `networkHelpers.time.increase(seconds)` — advances the chain's **timestamp**. Used for the Timelock's `minDelay`, which is measured in seconds (`block.timestamp`).
 
-To set the `SEPOLIA_PRIVATE_KEY` config variable using `hardhat-keystore`:
+### Why Execution Takes Multiple Steps
 
-```shell
-npx hardhat keystore set SEPOLIA_PRIVATE_KEY
-```
+`queue()` and `execute()` are deliberately separate calls. `queue()` schedules the operation in the Timelock and starts the delay countdown; `execute()` can only succeed once that delay has fully elapsed. This separation is what gives the community a window to react if a malicious proposal somehow passes a vote.
 
-After setting the variable, you can run the deployment with the Sepolia network:
+### Performance Note
 
-```shell
-npx hardhat ignition deploy --network sepolia ignition/modules/Counter.ts
-```
+Test execution times vary significantly between runs on resource-constrained hardware (a 4GB RAM device was used throughout this project). The first test in a run is consistently slower (~18s) because it includes the full cost of deploying four contracts and warming up the local EVM; subsequent tests reusing the same fixture run in ~1.5s. This is an artifact of the local test environment, not the contracts themselves.
+
+## Project Series
+
+This is the final project of a 90-day self-taught journey:
+`SimpleStorage` -> `CrowdFunding` -> `Voting` -> `ERC20Token` -> `NFTCollection` -> `TokenStaking` -> `DexAMM` -> `LendingProtocol` -> `YieldVault` -> `Governance` -> **`MiniDeFiDAO`**
+
+## Author
+
+Wahyu — self-taught smart contract developer, built from zero JavaScript knowledge to a full DAO-governed DeFi protocol in 90 days.
+
+License: MIT

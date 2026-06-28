@@ -1,0 +1,8 @@
+node_modules/
+artifacts/
+cache/
+.env
+.agents/
+.claude
+AGENTS.md
+CLAUDE.md
